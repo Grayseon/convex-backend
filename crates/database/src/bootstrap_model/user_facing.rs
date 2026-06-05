@@ -227,6 +227,37 @@ impl<'a, RT: Runtime> UserFacingModel<'a, RT> {
         Ok(developer_document)
     }
 
+    /// Patch a document while running a schema migration.
+    ///
+    /// Skips active-schema enforcement so documents can be transformed in
+    /// intermediate states before schema validation runs.
+    #[fastrace::trace]
+    #[convex_macro::instrument_future]
+    pub async fn patch_for_schema_migration(
+        &mut self,
+        id: DeveloperDocumentId,
+        value: PatchValue,
+    ) -> anyhow::Result<DeveloperDocument> {
+        if self.tx.is_system(self.namespace, id.table())
+            && !(self.tx.identity.is_admin() || self.tx.identity.is_system())
+        {
+            anyhow::bail!(unauthorized_error("patch"))
+        }
+        self.require_active_component().await?;
+
+        let id_ = self.tx.resolve_developer_id(&id, self.namespace)?;
+        let new_document = self
+            .tx
+            .patch_inner_for_schema_migration(id_, value)
+            .await?;
+
+        if !self.tx.is_system(self.namespace, id.table()) {
+            new_document.check_user_size()?;
+        }
+
+        Ok(new_document.to_developer())
+    }
+
     /// Replace the document with the given value.
     #[fastrace::trace]
     #[convex_macro::instrument_future]

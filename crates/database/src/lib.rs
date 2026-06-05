@@ -141,6 +141,23 @@ pub use self::{
             SCHEMAS_TABLE,
             SCHEMA_STATE_FIELD,
         },
+        schema_migration_progress::{
+            types::SchemaMigrationProgressMetadata,
+            SchemaMigrationProgressModel,
+            SchemaMigrationProgressTable,
+            SCHEMA_MIGRATION_PROGRESS_BY_SCHEMA_ID,
+            SCHEMA_MIGRATION_PROGRESS_TABLE,
+        },
+        schema_migrations::{
+            types::{
+                SchemaMigrationRecordMetadata,
+                SchemaMigrationState,
+            },
+            SchemaMigrationsModel,
+            SchemaMigrationsTable,
+            SCHEMA_MIGRATIONS_BY_MIGRATION_ID,
+            SCHEMA_MIGRATIONS_TABLE,
+        },
         schema_validation_progress::{
             types::SchemaValidationProgressMetadata,
             SchemaValidationProgressModel,

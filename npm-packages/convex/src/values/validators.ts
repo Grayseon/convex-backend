@@ -1,5 +1,6 @@
 import { Expand } from "../type_utils.js";
 import { GenericId } from "./index.js";
+import type { FieldMigrationHandler } from "./migration.js";
 import { GenericValidator, ObjectType } from "./validator.js";
 import { JSONValue, convexToJson } from "./value.js";
 
@@ -59,6 +60,34 @@ abstract class BaseValidator<
   abstract get json(): ValidatorJSON;
   /** @internal */
   abstract asOptional(): Validator<Type | undefined, "optional", FieldPaths>;
+
+  /**
+   * Declare a data migration for this field when used in a schema.
+   *
+   * The migration runs automatically during `convex dev` / `convex deploy`
+   * before schema validation. The `id` ensures the migration only runs once.
+   *
+   * @param id - Unique, stable identifier for this migration.
+   * @param handler - Function that transforms the stored value.
+   */
+  migrate<TDoc extends Record<string, unknown>>(
+    id: string,
+    handler: FieldMigrationHandler<unknown, Type, TDoc>,
+  ): VMigrated<Type, IsOptional, FieldPaths> {
+    if (id.length === 0) {
+      throw new Error("Migration id must be a non-empty string");
+    }
+    return new VMigrated({
+      isOptional: this.isOptional,
+      inner: this as unknown as GenericValidator,
+      migrationId: id,
+      handler: handler as FieldMigrationHandler<
+        unknown,
+        Type,
+        Record<string, unknown>
+      >,
+    });
+  }
 }
 
 /**
@@ -674,6 +703,55 @@ export type VOptional<T extends Validator<any, OptionalProperty, any>> =
   : never
 
 /**
+ * A validator wrapping a field migration. The target validator is used for
+ * schema enforcement; migration metadata is exported separately.
+ *
+ * @public
+ */
+export class VMigrated<
+  Type,
+  IsOptional extends OptionalProperty = "required",
+  FieldPaths extends string = never,
+> extends BaseValidator<Type, IsOptional, FieldPaths> {
+  readonly inner: GenericValidator;
+  readonly migrationId: string;
+  readonly handler: FieldMigrationHandler<unknown, Type, Record<string, unknown>>;
+  readonly kind = "migrated" as const;
+
+  constructor({
+    isOptional,
+    inner,
+    migrationId,
+    handler,
+  }: {
+    isOptional: IsOptional;
+    inner: GenericValidator;
+    migrationId: string;
+    handler: FieldMigrationHandler<unknown, Type, Record<string, unknown>>;
+  }) {
+    super({ isOptional });
+    this.inner = inner;
+    this.migrationId = migrationId;
+    this.handler = handler;
+  }
+
+  /** @internal */
+  get json(): ValidatorJSON {
+    return this.inner.json;
+  }
+
+  /** @internal */
+  asOptional(): Validator<Type | undefined, "optional", FieldPaths> {
+    return new VMigrated<Type | undefined, "optional", FieldPaths>({
+      isOptional: "optional",
+      inner: this.inner.asOptional(),
+      migrationId: this.migrationId,
+      handler: this.handler,
+    });
+  }
+}
+
+/**
  * Type representing whether a property in an object is optional or required.
  *
  * @public
@@ -731,7 +809,8 @@ export type Validator<
       IsOptional,
       FieldPaths
     >
-  | VUnion<Type, Validator<any, "required", any>[], IsOptional, FieldPaths>;
+  | VUnion<Type, Validator<any, "required", any>[], IsOptional, FieldPaths>
+  | VMigrated<Type, IsOptional, FieldPaths>;
 
 /**
  * Join together two index field paths.

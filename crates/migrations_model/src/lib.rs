@@ -33,7 +33,7 @@ pub type DatabaseVersion = i64;
 // migrations unless explicitly dropping support.
 // Add a user name next to the version when you make a change to highlight merge
 // conflicts.
-pub const DATABASE_VERSION: DatabaseVersion = 125; // nicolas
+pub const DATABASE_VERSION: DatabaseVersion = 126; // schema migrations tables
 
 pub struct MigrationExecutor<RT: Runtime> {
     pub db: Database<RT>,
@@ -103,6 +103,11 @@ impl<RT: Runtime> MigrationExecutor<RT> {
                 self.db
                     .commit_with_write_source(tx, "migration_125")
                     .await?;
+                MigrationCompletionCriterion::MigrationComplete(to_version)
+            },
+            126 => {
+                // Empty migration because we added new system tables for each
+                // component: _schema_migrations and _schema_migration_progress
                 MigrationCompletionCriterion::MigrationComplete(to_version)
             },
             // NOTE: Make sure to increase DATABASE_VERSION when adding new migrations.

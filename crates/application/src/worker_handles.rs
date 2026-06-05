@@ -24,6 +24,7 @@ pub struct WorkerHandles {
     pub(crate) search_and_vector_bootstrap_worker: Arc<Mutex<Box<dyn SpawnHandle>>>,
     pub(crate) table_summary_worker: TableSummaryClient,
     pub(crate) schema_worker: Arc<Mutex<Box<dyn SpawnHandle>>>,
+    pub(crate) schema_migration_worker: Arc<Mutex<Box<dyn SpawnHandle>>>,
     pub(crate) snapshot_import_worker: Arc<Mutex<Option<Box<dyn SpawnHandle>>>>,
     pub(crate) export_worker: Arc<Mutex<Option<Box<dyn SpawnHandle>>>>,
     pub(crate) system_table_cleanup_worker: Arc<Mutex<Box<dyn SpawnHandle>>>,
@@ -36,6 +37,7 @@ impl WorkerHandles {
         self.table_summary_worker.shutdown().await?;
         self.system_table_cleanup_worker.lock().shutdown();
         self.schema_worker.lock().shutdown();
+        self.schema_migration_worker.lock().shutdown();
         let index_worker = self.index_worker.lock().take();
         if let Some(index_worker) = index_worker {
             shutdown_and_join(index_worker).await?;

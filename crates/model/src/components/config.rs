@@ -30,6 +30,8 @@ use database::{
     BootstrapComponentsModel,
     IndexModel,
     SchemaDiff,
+    SchemaMigrationProgressTable,
+    SchemaMigrationsTable,
     SchemaModel,
     SchemaValidationProgressTable,
     SchemasTable,
@@ -390,6 +392,20 @@ impl<'a, RT: Runtime> ComponentConfigModel<'a, RT> {
         initialize_application_system_table(
             self.tx,
             &SchemaValidationProgressTable,
+            component_id.into(),
+            &DEFAULT_TABLE_NUMBERS,
+        )
+        .await?;
+        initialize_application_system_table(
+            self.tx,
+            &SchemaMigrationsTable,
+            component_id.into(),
+            &DEFAULT_TABLE_NUMBERS,
+        )
+        .await?;
+        initialize_application_system_table(
+            self.tx,
+            &SchemaMigrationProgressTable,
             component_id.into(),
             &DEFAULT_TABLE_NUMBERS,
         )

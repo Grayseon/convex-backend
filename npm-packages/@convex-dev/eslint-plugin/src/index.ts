@@ -4,6 +4,7 @@ import { requireArgsValidator } from "./lib/require-args-validator.js";
 import { noFilterInQuery } from "./lib/no-filter-in-query.js";
 import { explicitTableIds } from "./lib/explicit-table-ids.js";
 import { noCollectInQuery } from "./lib/no-collect-in-query.js";
+import { noMigrateOutsideSchema } from "./lib/no-migrate-outside-schema.js";
 import type { RuleModule } from "@typescript-eslint/utils/ts-eslint";
 import { version } from "./version.js";
 
@@ -14,6 +15,7 @@ const rules = {
   "explicit-table-ids": explicitTableIds,
   "no-filter-in-query": noFilterInQuery,
   "no-collect-in-query": noCollectInQuery,
+  "no-migrate-outside-schema": noMigrateOutsideSchema,
 } satisfies Record<string, RuleModule<string, unknown[]>>;
 
 const recommendedRules = {

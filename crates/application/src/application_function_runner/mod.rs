@@ -1778,6 +1778,27 @@ impl<RT: Runtime> ApplicationFunctionRunner<RT> {
             .await
     }
 
+    #[fastrace::trace]
+    pub async fn run_migration_handler(
+        &self,
+        handlers: Vec<String>,
+        handler_index: usize,
+        ctx: serde_json::Value,
+        rng_seed: [u8; 32],
+        unix_timestamp: UnixTimestamp,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        self.isolate_functions
+            .function_runner
+            .run_migration_handler(
+                handlers,
+                handler_index,
+                ctx,
+                rng_seed,
+                unix_timestamp,
+            )
+            .await
+    }
+
     pub async fn evaluate_auth_config(
         &self,
         auth_config_bundle: ModuleSource,

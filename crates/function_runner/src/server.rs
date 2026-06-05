@@ -563,6 +563,28 @@ impl<RT: Runtime, S: StorageForDeployment<RT>> FunctionRunnerCore<RT, S> {
     }
 
     #[fastrace::trace]
+    pub async fn run_migration_handler(
+        &self,
+        handlers: Vec<String>,
+        handler_index: usize,
+        ctx: serde_json::Value,
+        rng_seed: [u8; 32],
+        unix_timestamp: UnixTimestamp,
+        deployment_name: String,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        self.isolate_client
+            .run_migration_handler(
+                handlers,
+                handler_index,
+                ctx,
+                rng_seed,
+                unix_timestamp,
+                deployment_name,
+            )
+            .await
+    }
+
+    #[fastrace::trace]
     pub async fn evaluate_auth_config(
         &self,
         auth_config_bundle: ModuleSource,

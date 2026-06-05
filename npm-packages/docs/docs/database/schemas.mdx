@@ -267,6 +267,63 @@ validate documents in the tables listed in the schema. You can still create and
 modify documents in other tables in JavaScript or on the dashboard (they just
 won't be validated).
 
+## Schema migrations
+
+When you change a field type or reshape documents, existing data may not match
+your new schema. Use `.migrate()` on validators or tables to declare inline data
+migrations that run automatically during `convex dev` and `convex deploy`, before
+schema validation.
+
+Field-level migrations transform a single field:
+
+```typescript title="convex/schema.ts"
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  numbers: defineTable({
+    key: v.string(),
+    value: v.string().migrate("number to string", (ctx) => {
+      if (typeof ctx.oldValue === "number") {
+        return `${ctx.doc.key}: ${ctx.oldValue.toString()}`;
+      }
+    }),
+  }),
+});
+```
+
+Table-level migrations can patch multiple fields at once:
+
+```typescript title="convex/schema.ts"
+users: defineTable({
+  first: v.optional(v.string()),
+  last: v.optional(v.string()),
+  name: v.optional(v.string()),
+}).migrate("combine name fields", (ctx) => {
+  if (ctx.doc.first && ctx.doc.last && !ctx.doc.name) {
+    return {
+      name: `${ctx.doc.first} ${ctx.doc.last}`,
+      first: undefined,
+      last: undefined,
+    };
+  }
+}),
+```
+
+**Migration handler semantics:**
+
+- Return a value (field) or partial patch object (table) to update the document.
+- Return `undefined` to skip a document (already migrated or not applicable).
+- Throw to fail the push and surface the error.
+
+Each migration has a stable string `id`. Once a migration runs in an environment,
+Convex records that id and skips re-running it. If you change the handler code
+under the same id, the push fails — use a new id instead.
+
+In development, `convex dev` prompts before running pending migrations. In
+production, migrations run automatically. For complex multi-table or long-running
+migrations, use [`@convex-dev/migrations`](/production/migrations.mdx).
+
 ## Schema validation
 
 Schemas are pushed automatically in [`npx convex dev`](/cli/reference/dev.mdx)

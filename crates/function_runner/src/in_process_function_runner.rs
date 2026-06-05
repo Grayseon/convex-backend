@@ -371,6 +371,27 @@ impl<RT: Runtime> FunctionRunner<RT> for InProcessFunctionRunner<RT> {
     }
 
     #[fastrace::trace]
+    async fn run_migration_handler(
+        &self,
+        handlers: Vec<String>,
+        handler_index: usize,
+        ctx: serde_json::Value,
+        rng_seed: [u8; 32],
+        unix_timestamp: UnixTimestamp,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        self.server
+            .run_migration_handler(
+                handlers,
+                handler_index,
+                ctx,
+                rng_seed,
+                unix_timestamp,
+                self.deployment.name.clone(),
+            )
+            .await
+    }
+
+    #[fastrace::trace]
     async fn evaluate_auth_config(
         &self,
         auth_config_bundle: ModuleSource,

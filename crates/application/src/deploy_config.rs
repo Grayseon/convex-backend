@@ -43,6 +43,8 @@ use database::{
     BootstrapComponentsModel,
     IndexModel,
     OccRetryStats,
+    SchemaMigrationState,
+    SchemaMigrationsModel,
     Token,
     WriteSource,
     SCHEMAS_TABLE,
@@ -70,6 +72,7 @@ use model::{
             ComponentDefinitionDiff,
             ComponentDiff,
             SchemaChange,
+            SerializedSchemaChange,
         },
         file_based_routing::file_based_exports,
         type_checking::{
@@ -136,6 +139,8 @@ use value::{
 };
 
 use crate::{
+    schema_migration_worker::SchemaMigrationWorker,
+    schema_worker::SchemaWorker,
     validate_env_var_values,
     Application,
     ApplyConfigArgs,
@@ -179,6 +184,22 @@ impl<RT: Runtime> Application<RT> {
             user_environment_variables,
             app_functions,
         } = self.evaluate_push_contents(config).await?;
+
+        if !config.dry_run && !config.for_codegen {
+            let pending_migrations = self
+                .compute_pending_migrations(&app, &evaluated_components)
+                .await?;
+            if !pending_migrations.is_empty() && !config.migrations_approved {
+                anyhow::bail!(ErrorMetadata::bad_request(
+                    "MigrationsNotApproved",
+                    format!(
+                        "This push includes {} pending schema migration(s). Approve migrations \
+                         before pushing.",
+                        pending_migrations.len()
+                    )
+                ));
+            }
+        }
 
         let skip_index_diff = config.dry_run || config.for_codegen;
         let mut schema_change = self
@@ -545,7 +566,88 @@ impl<RT: Runtime> Application<RT> {
             .handle_schema_change_read_only(&app, &evaluated_components)
             .await?;
 
-        Ok(EvaluatePushResponse { schema_change })
+        let pending_migrations = self
+            .compute_pending_migrations(&app, &evaluated_components)
+            .await?;
+
+        Ok(EvaluatePushResponse {
+            schema_change,
+            pending_migrations,
+        })
+    }
+
+    async fn compute_pending_migrations(
+        &self,
+        app: &CheckedComponent,
+        evaluated_components: &BTreeMap<ComponentDefinitionPath, EvaluatedComponentDefinition>,
+    ) -> anyhow::Result<Vec<PendingMigration>> {
+        let mut tx = self.begin(Identity::system()).await?;
+        let mut pending = Vec::new();
+        let mut components_to_check = vec![app];
+        while let Some(component) = components_to_check.pop() {
+            let evaluated = match evaluated_components.get(&component.definition_path) {
+                Some(evaluated) => evaluated,
+                None => {
+                    for child in component.child_components.values() {
+                        components_to_check.push(child);
+                    }
+                    continue;
+                },
+            };
+            let Some(schema) = &evaluated.schema else {
+                for child in component.child_components.values() {
+                    components_to_check.push(child);
+                }
+                continue;
+            };
+            let component_path = &component.component_path;
+            let component_path_str = component_path.to_string();
+            let component_id = if component_path.is_root() {
+                ComponentId::Root
+            } else {
+                let existing = BootstrapComponentsModel::new(&mut tx)
+                    .resolve_path(component_path)?
+                    .context("Missing component for pending migration check")?;
+                ComponentId::Child(existing.id().into())
+            };
+            let namespace = TableNamespace::from(component_id);
+            let mut migrations_model = SchemaMigrationsModel::new(&mut tx, namespace);
+            for migration in &schema.migrations {
+                let already_completed = if let Some(existing) = migrations_model
+                    .get_completed_migration(&migration.id, &component_path_str)
+                    .await?
+                {
+                    if existing.handler_hash != migration.handler_hash {
+                        anyhow::bail!(ErrorMetadata::bad_request(
+                            "MigrationHandlerChanged",
+                            format!(
+                                "Migration \"{}\" has already run with different code. Use a new \
+                                 migration id.",
+                                migration.id
+                            )
+                        ));
+                    }
+                    matches!(existing.state, SchemaMigrationState::Completed)
+                } else {
+                    false
+                };
+                if !already_completed {
+                    pending.push(PendingMigration {
+                        id: migration.id.clone(),
+                        table_name: migration.table_name.to_string(),
+                        scope: match migration.scope {
+                            common::schemas::SchemaMigrationScope::Field => "field".to_string(),
+                            common::schemas::SchemaMigrationScope::Table => "table".to_string(),
+                        },
+                        field_path: migration.field_path.clone(),
+                    });
+                }
+            }
+            for child in component.child_components.values() {
+                components_to_check.push(child);
+            }
+        }
+        Ok(pending)
     }
 
     #[fastrace::trace]
@@ -557,6 +659,13 @@ impl<RT: Runtime> Application<RT> {
     ) -> anyhow::Result<SchemaStatus> {
         let deadline = self.runtime().monotonic_now() + timeout;
         loop {
+            SchemaMigrationWorker::run_pending_migrations_from(
+                self.database.clone(),
+                self.runner(),
+                self.runtime(),
+            )
+            .await;
+            SchemaWorker::run_pending_validations_from(self.database.clone(), self.runtime()).await;
             let (status, token) = self
                 .load_component_schema_status(&identity, &schema_change)
                 .await?;
@@ -596,15 +705,16 @@ impl<RT: Runtime> Application<RT> {
                 .get(schema_id)
                 .await?
                 .context("Missing schema document")?;
-            let SchemaMetadata { state, .. } = document.into_value().0.try_into()?;
+            let schema_metadata: SchemaMetadata = document.into_value().0.try_into()?;
+            let SchemaMetadata { state, .. } = &schema_metadata;
             let schema_validation_complete = match state {
                 SchemaState::Pending => false,
                 SchemaState::Active | SchemaState::Validated => true,
                 SchemaState::Failed { error, table_name } => {
                     let status = SchemaStatus::Failed {
-                        error,
+                        error: error.clone(),
                         component_path: component_path.clone(),
-                        table_name,
+                        table_name: table_name.clone(),
                     };
                     return Ok((status, tx.into_token()?));
                 },
@@ -642,10 +752,37 @@ impl<RT: Runtime> Application<RT> {
                 }
                 indexes_total += 1;
             }
+            let db_schema = schema_metadata.database_schema()?;
+            let migrations_complete = SchemaMigrationWorker::migrations_complete_for_schema(
+                &self.database,
+                namespace,
+                &component_path.to_string(),
+                &db_schema,
+            )
+            .await?;
+            let migrations_total = db_schema.migrations.len();
+            let mut migrations_processed = 0usize;
+            if migrations_total > 0 {
+                let mut migrations_model = SchemaMigrationsModel::new(&mut tx, namespace);
+                let component_path_str = component_path.to_string();
+                for migration in &db_schema.migrations {
+                    if let Some(existing) = migrations_model
+                        .get_completed_migration(&migration.id, &component_path_str)
+                        .await?
+                    {
+                        if matches!(existing.state, SchemaMigrationState::Completed) {
+                            migrations_processed += 1;
+                        }
+                    }
+                }
+            }
             components_status.insert(
                 component_path.clone(),
                 ComponentSchemaStatus {
                     schema_validation_complete,
+                    migrations_complete,
+                    migrations_processed,
+                    migrations_total,
                     indexes_complete,
                     indexes_total,
                 },
@@ -1032,6 +1169,10 @@ pub struct StartPushRequest {
     /// full mutiphase push.
     #[serde(default)]
     pub for_codegen: bool,
+
+    /// Confirms that pending schema migrations should run during this push.
+    #[serde(default)]
+    pub migrations_approved: bool,
 }
 
 impl StartPushRequest {
@@ -1067,6 +1208,7 @@ impl StartPushRequest {
             node_version,
             dry_run: self.dry_run,
             for_codegen: self.for_codegen,
+            migrations_approved: self.migrations_approved,
         })
     }
 }
@@ -1095,9 +1237,60 @@ pub struct StartPushResult {
     pub app_functions: Vec<ModuleConfig>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PendingMigration {
+    pub id: String,
+    pub table_name: String,
+    pub scope: String,
+    pub field_path: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct EvaluatePushResponse {
     pub schema_change: SchemaChange,
+    pub pending_migrations: Vec<PendingMigration>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingMigrationJson {
+    pub id: String,
+    pub table_name: String,
+    pub scope: String,
+    pub field_path: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvaluatePushResponseJson {
+    pub schema_change: SerializedSchemaChange,
+    pub pending_migrations: Vec<PendingMigrationJson>,
+}
+
+impl From<PendingMigration> for PendingMigrationJson {
+    fn from(value: PendingMigration) -> Self {
+        Self {
+            id: value.id,
+            table_name: value.table_name,
+            scope: value.scope,
+            field_path: value.field_path,
+        }
+    }
+}
+
+impl TryFrom<EvaluatePushResponse> for EvaluatePushResponseJson {
+    type Error = anyhow::Error;
+
+    fn try_from(value: EvaluatePushResponse) -> Result<Self, Self::Error> {
+        Ok(Self {
+            schema_change: value.schema_change.try_into()?,
+            pending_migrations: value
+                .pending_migrations
+                .into_iter()
+                .map(PendingMigrationJson::from)
+                .collect(),
+        })
+    }
 }
 
 impl From<NodeDependencyJson> for NodeDependency {
@@ -1372,13 +1565,18 @@ impl From<SchemaStatus> for SchemaStatusJson {
 #[derive(Debug)]
 pub struct ComponentSchemaStatus {
     pub schema_validation_complete: bool,
+    pub migrations_complete: bool,
+    pub migrations_processed: usize,
+    pub migrations_total: usize,
     pub indexes_complete: usize,
     pub indexes_total: usize,
 }
 
 impl ComponentSchemaStatus {
     pub fn is_complete(&self) -> bool {
-        self.schema_validation_complete && self.indexes_complete == self.indexes_total
+        self.migrations_complete
+            && self.schema_validation_complete
+            && self.indexes_complete == self.indexes_total
     }
 }
 
@@ -1386,6 +1584,9 @@ impl ComponentSchemaStatus {
 #[serde(rename_all = "camelCase")]
 pub struct ComponentSchemaStatusJson {
     pub schema_validation_complete: bool,
+    pub migrations_complete: bool,
+    pub migrations_processed: usize,
+    pub migrations_total: usize,
     pub indexes_complete: usize,
     pub indexes_total: usize,
 }
@@ -1394,6 +1595,9 @@ impl From<ComponentSchemaStatus> for ComponentSchemaStatusJson {
     fn from(value: ComponentSchemaStatus) -> Self {
         Self {
             schema_validation_complete: value.schema_validation_complete,
+            migrations_complete: value.migrations_complete,
+            migrations_processed: value.migrations_processed,
+            migrations_total: value.migrations_total,
             indexes_complete: value.indexes_complete,
             indexes_total: value.indexes_total,
         }

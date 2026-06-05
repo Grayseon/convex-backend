@@ -28,6 +28,7 @@ use crate::{
             AppDefinitionEvaluator,
             ComponentInitializerEvaluator,
         },
+        migration::MigrationEnvironment,
         schema::SchemaEnvironment,
         udf::DatabaseUdfEnvironment,
     },
@@ -273,6 +274,28 @@ impl<RT: Runtime> FunctionRunnerIsolateWorker<RT> {
 
                 let _ = response.send(r);
                 "EvaluateSchema".to_string()
+            },
+            RequestType::RunMigrationHandler {
+                handlers,
+                handler_index,
+                ctx,
+                rng_seed,
+                unix_timestamp,
+                response,
+            } => {
+                let r = MigrationEnvironment::run_migration_handler(
+                    client_id,
+                    isolate,
+                    v8_context,
+                    &handlers,
+                    handler_index,
+                    ctx,
+                    rng_seed,
+                    unix_timestamp,
+                )
+                .await;
+                let _ = response.send(r);
+                "RunMigrationHandler".to_string()
             },
             RequestType::EvaluateAuthConfig {
                 auth_config_bundle,

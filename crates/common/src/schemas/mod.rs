@@ -51,7 +51,13 @@ use crate::{
 };
 
 pub mod json;
+pub mod migrations;
 pub mod validator;
+
+pub use migrations::{
+    SchemaMigration,
+    SchemaMigrationScope,
+};
 
 pub const MAX_INDEXES_PER_TABLE: usize = 64;
 #[derive(derive_more::Display, Debug, Clone, PartialEq)]
@@ -144,6 +150,8 @@ impl From<SchemaEnforcementError> for SchemaValidationError {
 pub struct DatabaseSchema {
     pub tables: BTreeMap<TableName, TableDefinition>,
     pub schema_validation: bool,
+    pub migrations: Vec<SchemaMigration>,
+    pub migration_handlers: Vec<String>,
 }
 
 #[macro_export]
@@ -176,6 +184,8 @@ macro_rules! db_schema {
             DatabaseSchema {
                 tables,
                 schema_validation: true,
+                migrations: vec![],
+                migration_handlers: vec![],
             }
         }
     };
@@ -210,6 +220,8 @@ macro_rules! db_schema_not_validated {
             DatabaseSchema {
                 tables,
                 schema_validation: false,
+                migrations: vec![],
+                migration_handlers: vec![],
             }
         }
     };

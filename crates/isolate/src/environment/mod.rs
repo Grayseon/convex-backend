@@ -19,6 +19,7 @@ pub mod auth_config;
 pub mod component_definitions;
 pub mod crypto_rng;
 pub mod helpers;
+pub mod migration;
 pub mod schema;
 pub mod udf;
 

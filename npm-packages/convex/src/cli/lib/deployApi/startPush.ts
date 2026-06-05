@@ -11,6 +11,14 @@ import { authInfo } from "./types.js";
 import { looseObject } from "./utils.js";
 import { indexDiff } from "./finishPush.js";
 
+export const pendingMigration = looseObject({
+  id: z.string(),
+  tableName: z.string(),
+  scope: z.union([z.literal("field"), z.literal("table")]),
+  fieldPath: z.optional(z.string()),
+});
+export type PendingMigration = z.infer<typeof pendingMigration>;
+
 export const startPushRequest = looseObject({
   adminKey: z.string(),
   dryRun: z.boolean(),
@@ -23,6 +31,10 @@ export const startPushRequest = looseObject({
   nodeDependencies: z.array(nodeDependency),
 
   nodeVersion: z.optional(z.string()),
+
+  migrationsApproved: z.optional(z.boolean()),
+
+  forCodegen: z.optional(z.boolean()),
 });
 export type StartPushRequest = z.infer<typeof startPushRequest>;
 
@@ -50,11 +62,15 @@ export type StartPushResponse = z.infer<typeof startPushResponse>;
 
 export const evaluatePushResponse = looseObject({
   schemaChange,
+  pendingMigrations: z.array(pendingMigration).optional(),
 });
 export type EvaluatePushResponse = z.infer<typeof evaluatePushResponse>;
 
 export const componentSchemaStatus = looseObject({
   schemaValidationComplete: z.boolean(),
+  migrationsComplete: z.boolean().optional(),
+  migrationsProcessed: z.number().optional(),
+  migrationsTotal: z.number().optional(),
   indexesComplete: z.number(),
   indexesTotal: z.number(),
 });

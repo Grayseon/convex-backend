@@ -592,6 +592,40 @@ impl<RT: Runtime> Transaction<RT> {
         Ok(new_document)
     }
 
+    /// Patch a document without validating against the active schema.
+    ///
+    /// Used by the schema migration worker while transforming documents toward a
+    /// pending schema. Documents may be in intermediate states that match neither
+    /// the active nor pending schema until all migrations finish.
+    #[convex_macro::instrument_future]
+    pub(crate) async fn patch_inner_for_schema_migration(
+        &mut self,
+        id: ResolvedDocumentId,
+        value: PatchValue,
+    ) -> anyhow::Result<ResolvedDocument> {
+        task::consume_budget().await;
+
+        let table_name = self.table_mapping().tablet_name(id.tablet_id)?;
+        let (old_document, old_ts) =
+            self.get_inner(id, table_name)
+                .await?
+                .context(ErrorMetadata::bad_request(
+                    "NonexistentDocument",
+                    format!("Update on nonexistent document ID {id}"),
+                ))?;
+
+        let new_document = {
+            let patched_value = value.apply(old_document.value().clone().into_value())?;
+            old_document.replace_value(patched_value)?
+        };
+        if new_document == old_document {
+            return Ok(new_document);
+        }
+
+        self.apply_validated_write(id, Some((old_document, old_ts)), Some(new_document.clone()))?;
+        Ok(new_document)
+    }
+
     pub fn is_system(&mut self, namespace: TableNamespace, table_number: TableNumber) -> bool {
         let tablet_id =
             self.table_mapping().namespace(namespace).number_to_tablet()(table_number).ok();

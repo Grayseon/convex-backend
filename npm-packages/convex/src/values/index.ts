@@ -21,6 +21,12 @@ export type {
   PropertyValidators,
 } from "./validator.js";
 export type {
+  MigrationContext,
+  FieldMigrationHandler,
+  TableMigrationContext,
+  TableMigrationHandler,
+} from "./migration.js";
+export type {
   ValidatorJSON,
   RecordKeyValidatorJSON,
   RecordValueValidatorJSON,
@@ -41,6 +47,7 @@ export type {
   VRecord,
   VUnion,
   VOptional,
+  VMigrated,
 } from "./validators.js";
 import * as Base64 from "./base64.js";
 export { Base64 };

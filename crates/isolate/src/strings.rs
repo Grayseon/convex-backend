@@ -84,6 +84,7 @@ declare_strings!(
     getContinuationPreservedEmbedderData,
     op,
     path,
+    runMigration,
     runRequest,
     setContinuationPreservedEmbedderData,
     setup,

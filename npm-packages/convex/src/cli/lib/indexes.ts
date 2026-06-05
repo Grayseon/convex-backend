@@ -22,6 +22,11 @@ export type IndexMetadata = {
   staged: boolean;
 };
 
+export type SchemaMigrationCheck =
+  | "no verification"
+  | "ask for confirmation"
+  | "auto approve";
+
 export type LargeIndexDeletionCheck =
   // Don’t verify whether large indexes have been deleted
   | "no verification"

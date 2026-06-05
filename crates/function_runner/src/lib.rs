@@ -134,6 +134,15 @@ pub trait FunctionRunner<RT: Runtime>: Send + Sync + 'static {
         unix_timestamp: UnixTimestamp,
     ) -> anyhow::Result<DatabaseSchema>;
 
+    async fn run_migration_handler(
+        &self,
+        handlers: Vec<String>,
+        handler_index: usize,
+        ctx: serde_json::Value,
+        rng_seed: [u8; 32],
+        unix_timestamp: UnixTimestamp,
+    ) -> anyhow::Result<Option<serde_json::Value>>;
+
     async fn evaluate_auth_config(
         &self,
         auth_config_bundle: ModuleSource,

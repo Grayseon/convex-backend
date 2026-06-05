@@ -316,6 +316,7 @@ use node_executor::Actions;
 use parking_lot::Mutex;
 use rand::Rng;
 use scheduled_jobs::ScheduledJobRunner;
+use schema_migration_worker::SchemaMigrationWorker;
 use schema_worker::SchemaWorker;
 use search::{
     query::RevisionWithKeys,
@@ -420,6 +421,7 @@ mod metrics;
 mod module_cache;
 pub mod redaction;
 pub mod scheduled_jobs;
+mod schema_migration_worker;
 mod schema_worker;
 pub mod snapshot_import;
 mod streaming_export;
@@ -823,6 +825,11 @@ impl<RT: Runtime> Application<RT> {
         ));
         function_runner.set_action_callbacks(runner.clone());
 
+        let schema_migration_worker = Arc::new(Mutex::new(runtime.spawn(
+            "schema_migration_worker",
+            SchemaMigrationWorker::start(runtime.clone(), database.clone(), runner.clone()),
+        )));
+
         let scheduled_job_runner = ScheduledJobRunner::start(
             runtime.clone(),
             deployment_name.clone(),
@@ -894,6 +901,7 @@ impl<RT: Runtime> Application<RT> {
             search_and_vector_bootstrap_worker,
             table_summary_worker,
             schema_worker,
+            schema_migration_worker,
             snapshot_import_worker,
             export_worker,
             system_table_cleanup_worker,

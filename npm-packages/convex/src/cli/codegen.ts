@@ -68,6 +68,7 @@ export const codegen = new Command("codegen")
       debugNodeApis: false,
       systemUdfs: !!options.systemUdfs,
       largeIndexDeletionCheck: "no verification" as const, // `codegen` is a read-only operation
+      schemaMigrationCheck: "no verification" as const,
       codegenOnlyThisComponent: options.componentDir,
     };
 

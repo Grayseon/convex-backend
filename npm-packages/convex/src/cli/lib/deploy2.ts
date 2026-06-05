@@ -209,18 +209,32 @@ export async function waitForSchema(
     switch (currentStatus.type) {
       case "inProgress": {
         let schemaDone = true;
+        let migrationsDone = true;
         let indexesComplete = 0;
         let indexesTotal = 0;
+        let migrationsProcessed = 0;
+        let migrationsTotal = 0;
         for (const componentStatus of Object.values(currentStatus.components)) {
           if (!componentStatus.schemaValidationComplete) {
             schemaDone = false;
           }
+          if (componentStatus.migrationsComplete === false) {
+            migrationsDone = false;
+          }
+          migrationsProcessed += componentStatus.migrationsProcessed ?? 0;
+          migrationsTotal += componentStatus.migrationsTotal ?? 0;
           indexesComplete += componentStatus.indexesComplete;
           indexesTotal += componentStatus.indexesTotal;
         }
         const indexesDone = indexesComplete === indexesTotal;
         let msg: string;
-        if (!indexesDone && !schemaDone) {
+        if (!migrationsDone) {
+          msg = addProgressLinkIfSlow(
+            `Running schema migrations (${migrationsProcessed}/${migrationsTotal} complete)...`,
+            options.deploymentName,
+            start,
+          );
+        } else if (!indexesDone && !schemaDone) {
           msg = addProgressLinkIfSlow(
             `Backfilling indexes (${indexesComplete}/${indexesTotal} ready) and checking that documents match your schema...`,
             options.deploymentName,
@@ -453,6 +467,7 @@ export async function deployToDeployment(
     largeIndexDeletionCheck: options.allowDeletingLargeIndexes
       ? "has confirmation"
       : "ask for confirmation",
+    schemaMigrationCheck: "auto approve",
     message: options.message,
   };
   showSpinner(`Deploying to ${url}...${options.dryRun ? " [dry run]" : ""}`);

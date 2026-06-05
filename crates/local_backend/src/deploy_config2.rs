@@ -5,7 +5,9 @@ use std::{
 
 use application::deploy_config::{
     EvaluatePushResponse,
+    EvaluatePushResponseJson,
     FinishPushDiff,
+    PendingMigrationJson,
     SchemaStatusJson,
     StartPushRequest,
     StartPushResponse,
@@ -175,9 +177,7 @@ impl TryFrom<EvaluatePushResponse> for SerializedEvaluatePushResponse {
     type Error = anyhow::Error;
 
     fn try_from(value: EvaluatePushResponse) -> Result<Self, Self::Error> {
-        Ok(Self {
-            schema_change: value.schema_change.try_into()?,
-        })
+        EvaluatePushResponseJson::try_from(value).map(Into::into)
     }
 }
 
@@ -185,6 +185,16 @@ impl TryFrom<EvaluatePushResponse> for SerializedEvaluatePushResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SerializedEvaluatePushResponse {
     schema_change: SerializedSchemaChange,
+    pending_migrations: Vec<PendingMigrationJson>,
+}
+
+impl From<EvaluatePushResponseJson> for SerializedEvaluatePushResponse {
+    fn from(value: EvaluatePushResponseJson) -> Self {
+        Self {
+            schema_change: value.schema_change,
+            pending_migrations: value.pending_migrations,
+        }
+    }
 }
 
 #[derive(Serialize)]

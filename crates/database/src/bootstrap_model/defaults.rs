@@ -38,6 +38,14 @@ use crate::{
         index_backfills::IndexBackfillTable,
         index_workers::IndexWorkerMetadataTable,
         schema::SchemasTable,
+        schema_migration_progress::{
+            SchemaMigrationProgressTable,
+            SCHEMA_MIGRATION_PROGRESS_TABLE,
+        },
+        schema_migrations::{
+            SchemaMigrationsTable,
+            SCHEMA_MIGRATIONS_TABLE,
+        },
         schema_validation_progress::{
             SchemaValidationProgressTable,
             SCHEMA_VALIDATION_PROGRESS_TABLE,
@@ -63,6 +71,8 @@ pub fn bootstrap_system_tables() -> Vec<&'static dyn ErasedSystemTable> {
         &ComponentDefinitionsTable,
         &ComponentsTable,
         &SchemaValidationProgressTable,
+        &SchemaMigrationsTable,
+        &SchemaMigrationProgressTable,
     ]
 }
 
@@ -77,7 +87,9 @@ pub static DEFAULT_BOOTSTRAP_TABLE_NUMBERS: LazyLock<BTreeMap<TableName, TableNu
             COMPONENT_DEFINITIONS_TABLE.clone() => tn(31),
             COMPONENTS_TABLE.clone() => tn(32),
             INDEX_BACKFILLS_TABLE.clone() => tn(36),
-            SCHEMA_VALIDATION_PROGRESS_TABLE.clone() => tn(37)
+            SCHEMA_VALIDATION_PROGRESS_TABLE.clone() => tn(37),
+            SCHEMA_MIGRATIONS_TABLE.clone() => tn(38),
+            SCHEMA_MIGRATION_PROGRESS_TABLE.clone() => tn(39),
             // To add a bootstrap system table, first add to model/src/lib and then
             // replicate that table number to here.
         }

@@ -43,6 +43,12 @@ import {
 } from "../server/system_fields.js";
 import { Expand } from "../type_utils.js";
 import {
+  collectFieldMigrationsFromValidator,
+  ExportedMigration,
+  serializeHandler,
+  TableMigrationHandler,
+} from "../values/migration.js";
+import {
   GenericValidator,
   ObjectType,
   isValidator,
@@ -197,6 +203,10 @@ export class TableDefinition<
   private stagedVectorIndexes: VectorIndex[];
   // The type of documents stored in this table.
   validator: DocumentType;
+  private tableMigrations: {
+    id: string;
+    handler: TableMigrationHandler<Record<string, unknown>>;
+  }[] = [];
 
   /**
    * @internal
@@ -209,6 +219,29 @@ export class TableDefinition<
     this.vectorIndexes = [];
     this.stagedVectorIndexes = [];
     this.validator = documentType;
+  }
+
+  /**
+   * Declare a table-level data migration.
+   *
+   * The migration runs automatically during `convex dev` / `convex deploy`
+   * before schema validation. The `id` ensures the migration only runs once.
+   *
+   * @param id - Unique, stable identifier for this migration.
+   * @param handler - Function that returns a partial patch for each document.
+   */
+  migrate<TDoc extends Record<string, unknown>>(
+    id: string,
+    handler: TableMigrationHandler<TDoc>,
+  ): this {
+    if (id.length === 0) {
+      throw new Error("Migration id must be a non-empty string");
+    }
+    this.tableMigrations.push({
+      id,
+      handler: handler as TableMigrationHandler<Record<string, unknown>>,
+    });
+    return this;
   }
 
   /**
@@ -567,8 +600,27 @@ export class TableDefinition<
    * This is called internally by the Convex framework.
    * @internal
    */
-  export() {
-    const documentType = this.validator.json;
+  export(tableName: string, migrations: ExportedMigration[], handlers: string[]) {
+    const validatorWithoutMigrations = collectFieldMigrationsFromValidator(
+      this.validator as GenericValidator,
+      tableName,
+      "",
+      migrations,
+      handlers,
+    );
+    for (const tableMigration of this.tableMigrations) {
+      const handlerSource = serializeHandler(tableMigration.handler);
+      const handlerIndex = handlers.length;
+      handlers.push(handlerSource);
+      migrations.push({
+        id: tableMigration.id,
+        tableName,
+        scope: "table",
+        handlerIndex,
+        handlerSource,
+      });
+    }
+    const documentType = validatorWithoutMigrations.json;
     if (typeof documentType !== "object") {
       throw new Error(
         "Invalid validator: please make sure that the parameter of `defineTable` is valid (see https://docs.convex.dev/database/schemas)",
@@ -697,29 +749,36 @@ export class SchemaDefinition<
    * @internal
    */
   export(): string {
+    const migrations: ExportedMigration[] = [];
+    const migrationHandlers: string[] = [];
+    const tables = Object.entries(this.tables).map(([tableName, definition]) => {
+      const {
+        indexes,
+        stagedDbIndexes,
+        searchIndexes,
+        stagedSearchIndexes,
+        vectorIndexes,
+        stagedVectorIndexes,
+        documentType,
+      } = definition.export(tableName, migrations, migrationHandlers);
+      return {
+        tableName,
+        indexes,
+        stagedDbIndexes,
+        searchIndexes,
+        stagedSearchIndexes,
+        vectorIndexes,
+        stagedVectorIndexes,
+        documentType,
+      };
+    });
     return JSON.stringify({
-      tables: Object.entries(this.tables).map(([tableName, definition]) => {
-        const {
-          indexes,
-          stagedDbIndexes,
-          searchIndexes,
-          stagedSearchIndexes,
-          vectorIndexes,
-          stagedVectorIndexes,
-          documentType,
-        } = definition.export();
-        return {
-          tableName,
-          indexes,
-          stagedDbIndexes,
-          searchIndexes,
-          stagedSearchIndexes,
-          vectorIndexes,
-          stagedVectorIndexes,
-          documentType,
-        };
-      }),
+      tables,
       schemaValidation: this.schemaValidation,
+      migrations: migrations.map(
+        ({ handlerSource: _handlerSource, ...migration }) => migration,
+      ),
+      migrationHandlers,
     });
   }
 }

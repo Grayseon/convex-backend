@@ -53,6 +53,8 @@ pub struct ProjectConfig {
 
     pub dry_run: bool,
 
+    pub migrations_approved: bool,
+
     /// When true, relax typechecks that don't affect the codegen output. The
     /// CLI sets this for standalone component codegen (`convex codegen
     /// --component-dir ...`), where it wraps the target component in a

@@ -52,7 +52,10 @@ use value::{
     TabletId,
 };
 
-use crate::metrics::log_worker_starting;
+use crate::{
+    metrics::log_worker_starting,
+    schema_migration_worker::SchemaMigrationWorker,
+};
 
 mod metrics;
 
@@ -146,15 +149,61 @@ impl<RT: Runtime> SchemaWorker<RT> {
 
     pub async fn run(&self) -> anyhow::Result<Token> {
         let status = log_worker_starting("SchemaWorker");
+        self.run_pending_validations().await;
+
+        drop(status);
+        tracing::debug!("SchemaWorker waiting...");
         let mut tx: Transaction<RT> = self.database.begin(Identity::system()).await?;
-        let snapshot = self.database.snapshot(tx.begin_timestamp())?;
-        let pending_validations = SchemaWorker::pending_schema_validations(&mut tx).await?;
-        let token = tx.into_token()?;
+        Ok(tx.into_token()?)
+    }
+
+    /// Run schema validation for any pending schemas whose migrations have
+    /// finished. Called by the background worker and proactively from
+    /// `wait_for_schema` so validation makes progress during pushes.
+    pub async fn run_pending_validations_from(database: Database<RT>, runtime: RT) {
+        let worker = Self { runtime, database };
+        worker.run_pending_validations().await;
+    }
+
+    async fn run_pending_validations(&self) {
+        let Ok(mut tx) = self.database.begin(Identity::system()).await else {
+            return;
+        };
+        let Ok(snapshot) = self.database.snapshot(tx.begin_timestamp()) else {
+            return;
+        };
+        let Ok(pending_validations) = Self::pending_schema_validations(&mut tx).await else {
+            return;
+        };
+        drop(tx);
 
         for pending_validation in pending_validations {
             // FIXME: Remove clone
             let db_schema = pending_validation.db_schema.clone();
-            let tables_to_validate = DatabaseSchema::tables_to_validate(
+            let mut tx = self.database.begin(Identity::system()).await.ok();
+            let component_path = tx
+                .as_mut()
+                .and_then(|tx| {
+                    tx.get_component_path(pending_validation.namespace.into())
+                        .map(|p| p.to_string())
+                })
+                .unwrap_or_default();
+            drop(tx);
+            let Ok(migrations_complete) = SchemaMigrationWorker::migrations_complete_for_schema(
+                &self.database,
+                pending_validation.namespace,
+                &component_path,
+                &db_schema,
+            )
+            .await
+            else {
+                continue;
+            };
+            if !migrations_complete {
+                tracing::debug!("SchemaWorker waiting for schema migrations to complete");
+                continue;
+            }
+            let Ok(tables_to_validate) = DatabaseSchema::tables_to_validate(
                 &db_schema,
                 pending_validation.active_schema.as_deref(),
                 &pending_validation.table_mapping,
@@ -164,14 +213,16 @@ impl<RT: Runtime> SchemaWorker<RT> {
                         .table_summary(pending_validation.namespace, table_name)
                         .map(|t| t.inferred_type().clone())
                 },
-            )?;
-            self.validate_tables(tables_to_validate, pending_validation)
-                .await?;
+            ) else {
+                continue;
+            };
+            if let Err(e) = self
+                .validate_tables(tables_to_validate, pending_validation)
+                .await
+            {
+                report_error(&mut e.context("Failed to validate schema")).await;
+            }
         }
-
-        drop(status);
-        tracing::debug!("SchemaWorker waiting...");
-        Ok(token)
     }
 
     async fn validate_tables(

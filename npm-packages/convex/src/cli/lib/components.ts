@@ -50,8 +50,13 @@ import { Reporter, Span } from "./tracing.js";
 import { DEFINITION_FILENAME_TS } from "./components/constants.js";
 import { DeploymentType } from "./api.js";
 import { deploymentDashboardUrlPage } from "./dashboard.js";
-import { formatIndex, LargeIndexDeletionCheck } from "./indexes.js";
+import {
+  formatIndex,
+  LargeIndexDeletionCheck,
+  SchemaMigrationCheck,
+} from "./indexes.js";
 import { checkForLargeIndexDeletion } from "./checkForLargeIndexDeletion.js";
+import { checkForPendingMigrations } from "./checkForPendingMigrations.js";
 import { LogManager } from "./logs.js";
 import { createHash } from "crypto";
 import { Bundle, BundleHash } from "../../bundler/index.js";
@@ -75,6 +80,7 @@ export type PushOptions = {
   pushAllModules: boolean;
   logManager?: LogManager | undefined;
   largeIndexDeletionCheck: LargeIndexDeletionCheck;
+  schemaMigrationCheck: SchemaMigrationCheck;
   message: string | null;
 };
 
@@ -229,6 +235,7 @@ async function startComponentsPushAndCodegen(
     pushAllModules?: boolean;
     debugNodeApis: boolean;
     largeIndexDeletionCheck: LargeIndexDeletionCheck;
+    schemaMigrationCheck: SchemaMigrationCheck;
     codegenOnlyThisComponent?: string | undefined;
   },
 ): Promise<StartPushResponse | null> {
@@ -425,7 +432,7 @@ async function startComponentsPushAndCodegen(
       udfServerVersion,
     });
   }
-  const startPushRequest = {
+  const startPushRequest: StartPushRequest = {
     adminKey: options.adminKey,
     dryRun: options.dryRun,
     functions: projectConfig.functions,
@@ -456,6 +463,24 @@ async function startComponentsPushAndCodegen(
           options.largeIndexDeletionCheck === "ask for confirmation",
       }),
     );
+  }
+
+  if (options.schemaMigrationCheck !== "no verification") {
+    const { migrationsApproved } = await parentSpan.enterAsync(
+      "checkForPendingMigrations",
+      (span) =>
+        checkForPendingMigrations({
+          ctx,
+          span,
+          request: startPushRequest,
+          options,
+          askForConfirmation:
+            options.schemaMigrationCheck === "ask for confirmation",
+        }),
+    );
+    if (migrationsApproved) {
+      startPushRequest.migrationsApproved = true;
+    }
   }
 
   changeSpinner("Uploading functions to Convex...");

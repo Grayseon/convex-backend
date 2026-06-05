@@ -45,7 +45,10 @@ import {
   rootComponentApiCJS,
 } from "../codegen_templates/component_api.js";
 import { functionsDir } from "./utils/utils.js";
-import { LargeIndexDeletionCheck } from "./indexes.js";
+import {
+  LargeIndexDeletionCheck,
+  SchemaMigrationCheck,
+} from "./indexes.js";
 
 const PRESERVED_GENERATED_ENTRIES = new Set(["ai"]);
 
@@ -81,6 +84,7 @@ export type CodegenOptions = {
   debugNodeApis: boolean;
   systemUdfs: boolean;
   largeIndexDeletionCheck: LargeIndexDeletionCheck;
+  schemaMigrationCheck: SchemaMigrationCheck;
   codegenOnlyThisComponent?: string | undefined;
 };
 

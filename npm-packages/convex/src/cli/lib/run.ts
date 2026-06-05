@@ -501,6 +501,7 @@ export async function pushToDeployment(
       liveComponentSources: args.liveComponentSources,
       pushAllModules: false,
       largeIndexDeletionCheck: "no verification", // `convex run` can’t push to prod
+      schemaMigrationCheck: "no verification",
       message: null,
     },
     {

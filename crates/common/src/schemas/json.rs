@@ -25,6 +25,10 @@ use value::{
 };
 
 use super::{
+    migrations::{
+        SchemaMigration,
+        SchemaMigrationScope,
+    },
     validator::{
         FieldValidator,
         LiteralValidator,
@@ -63,6 +67,19 @@ use crate::{
 pub struct DatabaseSchemaJson {
     tables: Vec<TableDefinitionJson>,
     schema_validation: Option<bool>,
+    migrations: Option<Vec<SchemaMigrationJson>>,
+    migration_handlers: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaMigrationJson {
+    id: String,
+    table_name: String,
+    scope: String,
+    field_path: Option<String>,
+    target_validator: Option<ValidatorJson>,
+    handler_index: usize,
 }
 
 impl JsonForm for DatabaseSchema {
@@ -85,11 +102,58 @@ impl TryFrom<DatabaseSchemaJson> for DatabaseSchema {
         // Schemas written before schema validation was introduced don't include
         // this. Default to false.
         let schema_validation = j.schema_validation.unwrap_or(false);
+        let migration_handlers = j.migration_handlers.unwrap_or_default();
+        let migrations = j
+            .migrations
+            .unwrap_or_default()
+            .into_iter()
+            .map(|migration| parse_schema_migration(migration, &migration_handlers))
+            .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(DatabaseSchema {
             tables,
             schema_validation,
+            migrations,
+            migration_handlers,
         })
     }
+}
+
+fn parse_schema_migration(
+    migration: SchemaMigrationJson,
+    migration_handlers: &[String],
+) -> anyhow::Result<SchemaMigration> {
+    anyhow::ensure!(!migration.id.is_empty(), "Migration id must be non-empty");
+    let table_name: TableName = migration
+        .table_name
+        .parse()
+        .with_context(|| format!("Invalid table name in migration \"{}\"", migration.id))?;
+    let scope = match migration.scope.as_str() {
+        "field" => SchemaMigrationScope::Field,
+        "table" => SchemaMigrationScope::Table,
+        other => anyhow::bail!("Invalid migration scope \"{other}\""),
+    };
+    let handler_source = migration_handlers
+        .get(migration.handler_index)
+        .cloned()
+        .with_context(|| {
+            format!(
+                "Missing migration handler at index {} for migration \"{}\"",
+                migration.handler_index, migration.id
+            )
+        })?;
+    let target_validator = migration
+        .target_validator
+        .map(|v| v.try_into())
+        .transpose()?;
+    Ok(SchemaMigration::new(
+        migration.id,
+        table_name,
+        scope,
+        migration.field_path,
+        target_validator,
+        migration.handler_index,
+        handler_source,
+    ))
 }
 
 impl TryFrom<DatabaseSchema> for DatabaseSchemaJson {
@@ -99,6 +163,8 @@ impl TryFrom<DatabaseSchema> for DatabaseSchemaJson {
         DatabaseSchema {
             tables,
             schema_validation,
+            migrations,
+            migration_handlers,
         }: DatabaseSchema,
     ) -> anyhow::Result<Self> {
         Ok(DatabaseSchemaJson {
@@ -107,6 +173,43 @@ impl TryFrom<DatabaseSchema> for DatabaseSchemaJson {
                 .map(TableDefinitionJson::try_from)
                 .collect::<anyhow::Result<Vec<_>>>()?,
             schema_validation: Some(schema_validation),
+            migrations: if migrations.is_empty() {
+                None
+            } else {
+                Some(
+                    migrations
+                        .into_iter()
+                        .map(SchemaMigrationJson::try_from)
+                        .collect::<anyhow::Result<Vec<_>>>()?,
+                )
+            },
+            migration_handlers: if migration_handlers.is_empty() {
+                None
+            } else {
+                Some(migration_handlers)
+            },
+        })
+    }
+}
+
+impl TryFrom<SchemaMigration> for SchemaMigrationJson {
+    type Error = anyhow::Error;
+
+    fn try_from(migration: SchemaMigration) -> Result<Self, Self::Error> {
+        let scope = match migration.scope {
+            SchemaMigrationScope::Field => "field".to_string(),
+            SchemaMigrationScope::Table => "table".to_string(),
+        };
+        Ok(SchemaMigrationJson {
+            id: migration.id,
+            table_name: migration.table_name.to_string(),
+            scope,
+            field_path: migration.field_path,
+            target_validator: migration
+                .target_validator
+                .map(|v| ValidatorJson::try_from(v))
+                .transpose()?,
+            handler_index: migration.handler_index,
         })
     }
 }

@@ -300,6 +300,14 @@ pub enum RequestType<RT: Runtime> {
         unix_timestamp: UnixTimestamp,
         response: oneshot::Sender<anyhow::Result<DatabaseSchema>>,
     },
+    RunMigrationHandler {
+        handlers: Vec<String>,
+        handler_index: usize,
+        ctx: serde_json::Value,
+        rng_seed: [u8; 32],
+        unix_timestamp: UnixTimestamp,
+        response: oneshot::Sender<anyhow::Result<Option<serde_json::Value>>>,
+    },
     EvaluateAuthConfig {
         auth_config_bundle: ModuleSource,
         source_map: Option<SourceMap>,
@@ -400,6 +408,9 @@ impl<RT: Runtime> Request<RT> {
             RequestType::EvaluateSchema { response, .. } => {
                 let _ = response.send(Err(error));
             },
+            RequestType::RunMigrationHandler { response, .. } => {
+                let _ = response.send(Err(error));
+            },
             RequestType::EvaluateAuthConfig { response, .. } => {
                 let _ = response.send(Err(error));
             },
@@ -430,6 +441,9 @@ impl<RT: Runtime> Request<RT> {
                 let _ = response.send(Err(error));
             },
             RequestType::EvaluateSchema { response, .. } => {
+                let _ = response.send(Err(error));
+            },
+            RequestType::RunMigrationHandler { response, .. } => {
                 let _ = response.send(Err(error));
             },
             RequestType::EvaluateAuthConfig { response, .. } => {
@@ -990,6 +1004,33 @@ impl<RT: Runtime> IsolateClient<RT> {
                 Err(e) => return Err(recapture_stacktrace(e).await),
             }
         }
+    }
+
+    #[fastrace::trace]
+    pub async fn run_migration_handler(
+        &self,
+        handlers: Vec<String>,
+        handler_index: usize,
+        ctx: serde_json::Value,
+        rng_seed: [u8; 32],
+        unix_timestamp: UnixTimestamp,
+        instance_name: String,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        let (tx, rx) = oneshot::channel();
+        let request = RequestType::RunMigrationHandler {
+            handlers,
+            handler_index,
+            ctx,
+            rng_seed,
+            unix_timestamp,
+            response: tx,
+        };
+        self.send_request(Request::new(
+            instance_name,
+            request,
+            EncodedSpan::from_parent(),
+        ))?;
+        IsolateClient::<RT>::receive_response(rx).await?
     }
 
     #[fastrace::trace]
