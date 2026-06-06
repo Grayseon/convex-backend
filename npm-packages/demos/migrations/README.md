@@ -9,8 +9,7 @@ export default defineSchema({
 })
 ```
 
-|
-V
+to create a column:
 
 ```javascript
 export default defineSchema({
@@ -24,8 +23,7 @@ export default defineSchema({
 })
 ```
 
-|
-V
+to change the type of a column and transform the values:
 
 ```javascript
 export default defineSchema({
