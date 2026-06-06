@@ -6,7 +6,8 @@ export default defineSchema({
   numbers: defineTable({
     value: v.number()
   }),
-})```
+})
+```
 
 |
 V
@@ -20,7 +21,8 @@ export default defineSchema({
     }),
     value: v.string()
   }),
-})```
+})
+```
 
 |
 V
@@ -40,4 +42,5 @@ export default defineSchema({
       return oldValue as string;
     }),
   }),
-})```
+})
+```
