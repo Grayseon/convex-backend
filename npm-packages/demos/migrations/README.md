@@ -137,16 +137,22 @@ Restart `just run-local-backend` and run through the scenarios below again.
 
 ## Testing walkthrough
 
-**Important:** Seed data **before** migrations run. If you push a schema with pending
-migrations while tables are empty, those migrations mark complete immediately and
-will not re-run when you add documents later.
+Each step below gives a complete `convex/schema.ts` to copy in full.
+
+**Important:** Migrations only run once. If a migration completes while its table is
+empty, it will not re-run when you add documents later. Scenario 1 is staged across
+two pushes so you add numeric data **between** migrations and can watch the
+`number to string and add key` migration transform it.
 
 ### Scenario 1: Field migrations (`numbers`)
 
-**Step 1 — Start with the old schema**
+This scenario uses **two separate pushes** — first the `add key field` migration,
+then you insert data, then the `number to string and add key` migration runs on
+those documents.
 
-Temporarily replace `convex/schema.ts` with a schema that matches your existing
-data (no migrations yet):
+**Step 1 — Old schema (no migrations)**
+
+Create or replace `convex/schema.ts` with:
 
 ```typescript
 import { defineSchema, defineTable } from "convex/server";
@@ -161,46 +167,106 @@ export default defineSchema({
 
 Push it with `just convex dev`.
 
-**Step 2 — Insert old-format data**
+**Step 2 — First migration only (`add key field`)**
+
+Replace `convex/schema.ts` with:
+
+```typescript
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  numbers: defineTable({
+    key: v.string().migrate("add key field", (ctx) => {
+      if (!ctx.isMissing) return ctx.oldValue as string;
+      return "item";
+    }),
+    value: v.number(),
+  }),
+});
+```
+
+Save and approve the migration prompt:
+
+```
+This push will run 1 schema migration(s):
+  numbers.key  "add key field"
+```
+
+The table is empty, so this migration completes immediately with nothing to
+transform — that is expected.
+
+**Step 3 — Insert data with `key` and numeric `value`**
 
 Create `numbers-seed.json`:
 
 ```json
 [
-  { "value": 10 },
-  { "value": 42 }
+  { "key": "item", "value": 10 },
+  { "key": "item", "value": 42 }
 ]
 ```
 
-Import it:
+Import it **before** pushing the second migration:
 
 ```bash
 just convex import --table numbers --append -y numbers-seed.json
 ```
 
-Or insert rows from the dashboard with only a numeric `value` field.
-
-**Step 3 — Enable migrations**
-
-Restore the full `numbers` schema from `convex/schema.ts` (with both `.migrate()`
-calls on `key` and `value`). Save the file; `convex dev` will detect pending
-migrations and prompt:
-
-```
-This push will run 2 schema migration(s):
-  numbers.key  "add key field"
-  numbers.value  "number to string and add key"
-```
-
-Approve the prompt (or pass `--yes`).
-
-**Step 4 — Verify**
+Confirm the data is in place:
 
 ```bash
 just convex data numbers
 ```
 
-Expected result — each document gets a `key` and `value` becomes a string:
+You should see each document has a `key` and a numeric `value`:
+
+```
+key    | value
+-------|------
+"item" | 10
+"item" | 42
+```
+
+**Step 4 — Second migration (`number to string and add key`)**
+
+Replace `convex/schema.ts` with:
+
+```typescript
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  numbers: defineTable({
+    key: v.string(),
+    value: v.string().migrate("number to string and add key", (ctx) => {
+      const oldValue = ctx.oldValue;
+      const key = (ctx.doc.key as string | undefined) ?? "item";
+
+      if (typeof oldValue === "number") return `${key}: ${oldValue.toString()}`;
+      return oldValue as string;
+    }),
+  }),
+});
+```
+
+The `add key field` migration already ran, so `key` no longer has `.migrate()`.
+Save and approve the migration prompt:
+
+```
+This push will run 1 schema migration(s):
+  numbers.value  "number to string and add key"
+```
+
+This migration converts the numeric `value` fields you inserted in Step 3.
+
+**Step 5 — Verify**
+
+```bash
+just convex data numbers
+```
+
+Expected result — `key` is unchanged and `value` is now a string:
 
 ```
 key    | value
@@ -211,16 +277,24 @@ key    | value
 
 ### Scenario 2: Table migration (`users`)
 
-**Step 1 — Start with unmigrated users schema**
+Run `just reset-local-backend` and restart the backend before this scenario if you
+already completed Scenario 1.
 
-Use a schema with the `users` table but **without** the `.migrate()` call:
+**Step 1 — Users table without migration**
+
+Replace `convex/schema.ts` with:
 
 ```typescript
-users: defineTable({
-  first: v.optional(v.string()),
-  last: v.optional(v.string()),
-  name: v.optional(v.string()),
-}),
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  users: defineTable({
+    first: v.optional(v.string()),
+    last: v.optional(v.string()),
+    name: v.optional(v.string()),
+  }),
+});
 ```
 
 Push with `just convex dev`.
@@ -236,14 +310,38 @@ Create `users-seed.json`:
 ]
 ```
 
+Import it:
+
 ```bash
 just convex import --table users --append -y users-seed.json
 ```
 
-**Step 3 — Add the table migration**
+**Step 3 — Schema with table migration**
 
-Add the `.migrate("combine name fields", ...)` handler to the `users` table
-definition and save. Approve the migration prompt when `convex dev` pushes.
+Replace `convex/schema.ts` with:
+
+```typescript
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  users: defineTable({
+    first: v.optional(v.string()),
+    last: v.optional(v.string()),
+    name: v.optional(v.string()),
+  }).migrate("combine name fields", (ctx) => {
+    if (ctx.doc.first && ctx.doc.last) {
+      return {
+        name: `${ctx.doc.first} ${ctx.doc.last}`,
+        first: undefined,
+        last: undefined,
+      };
+    }
+  }),
+});
+```
+
+Save the file and approve the migration prompt when `convex dev` pushes.
 
 **Step 4 — Verify**
 
@@ -260,11 +358,12 @@ name              | first | last
 "Grace Hopper"    |       |
 ```
 
-## Current schema
+### Final schema (both tables, all migrations)
 
-The checked-in `convex/schema.ts` includes all migrations at once. That is the
-target end state. Use the walkthrough above to test incrementally on a fresh local
-backend, or reset and seed old-format data before pushing the full schema.
+This is the combined end state with a **required** `key` field. Follow the staged
+Scenario 1 walkthrough above to see each migration in isolation; use this schema
+once both migrations have already run, or on a new project where you are not
+stepping through the demo.
 
 ```typescript
 import { defineSchema, defineTable } from "convex/server";
@@ -300,6 +399,12 @@ export default defineSchema({
   }),
 });
 ```
+
+To run both scenarios on a fresh backend, follow the steps in order:
+
+1. `just reset-local-backend` and restart the backend
+2. Scenario 1, Steps 1–5 (two migration pushes with `numbers-seed.json` in between)
+3. Scenario 2, Steps 1–4 (users seed before the table migration push)
 
 ## Troubleshooting
 
