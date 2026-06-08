@@ -15,7 +15,7 @@ export const pendingMigration = looseObject({
   id: z.string(),
   tableName: z.string(),
   scope: z.union([z.literal("field"), z.literal("table")]),
-  fieldPath: z.optional(z.string()),
+  fieldPath: z.string().nullish(),
 });
 export type PendingMigration = z.infer<typeof pendingMigration>;
 

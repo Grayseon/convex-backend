@@ -194,6 +194,24 @@ impl MigrationEnvironment {
             r#"const handlers = [
 {handler_entries}
 ];
+
+function migrationPatchToJson(value) {{
+  if (value === undefined) {{
+    return {{ "$undefined": null }};
+  }}
+  if (value === null || typeof value !== "object") {{
+    return value;
+  }}
+  if (Array.isArray(value)) {{
+    return value.map(migrationPatchToJson);
+  }}
+  const out = {{}};
+  for (const [key, fieldValue] of Object.entries(value)) {{
+    out[key] = migrationPatchToJson(fieldValue);
+  }}
+  return out;
+}}
+
 export function runMigration(handlerIndex, ctxJson) {{
   const ctx = JSON.parse(ctxJson);
   const handler = handlers[handlerIndex];
@@ -204,7 +222,7 @@ export function runMigration(handlerIndex, ctxJson) {{
   if (result === undefined) {{
     return null;
   }}
-  return JSON.stringify(result);
+  return JSON.stringify(migrationPatchToJson(result));
 }}
 "#
         )
@@ -291,5 +309,17 @@ export function runMigration(handlerIndex, ctxJson) {{
         let result_str = to_rust_string(&scope, &result_v8)?;
         let parsed: JsonValue = serde_json::from_str(&result_str)?;
         Ok(Some(parsed))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MigrationEnvironment;
+
+    #[test]
+    fn migration_module_serializes_undefined_patch_fields() {
+        let module = MigrationEnvironment::build_migration_module(&[]);
+        assert!(module.contains("migrationPatchToJson"));
+        assert!(module.contains(r#""$undefined""#));
     }
 }
